@@ -7,28 +7,15 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 // ==========================================
 // 1. CORE SERVICES & INITIALIZATION
 // ==========================================
-final FlutterLocalNotificationsPlugin localNotificationsPlugin = FlutterLocalNotificationsPlugin();
 const Uuid uuid = Uuid();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize Notifications
-  const AndroidInitializationSettings initSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initSettings = InitializationSettings(android: initSettingsAndroid);
-  await localNotificationsPlugin.initialize(
-    initSettings,
-    onDidReceiveNotificationResponse: (NotificationResponse response) async {
-      debugPrint('Notification clicked: ${response.payload}');
-    },
-  );
-
   runApp(
     MultiProvider(
       providers: [
@@ -297,7 +284,6 @@ class PlannerState extends ChangeNotifier {
   List<String> get activeTypes => [...defaultSessionTypes, ...(currentUser?.customTypes ?? [])];
 
   Future<void> initializeSystem() async {
-    await _requestPermissions();
     final prefs = await SharedPreferences.getInstance();
     
     final usersJson = prefs.getString('sys_users_v2');
@@ -319,13 +305,6 @@ class PlannerState extends ChangeNotifier {
     currentUser = users.firstWhere((u) => u.id == lastUserId, orElse: () => users.first);
     
     await loadUserData();
-  }
-
-  Future<void> _requestPermissions() async {
-    if (await Permission.notification.isDenied) {
-      await Permission.notification.request();
-    }
-    // Note: Android 12+ Exact Alarms require explicitly checking/requesting SCHEDULE_EXACT_ALARM via native manifest.
   }
 
   Future<void> loadUserData() async {
@@ -403,40 +382,12 @@ class PlannerState extends ChangeNotifier {
     } else {
       sessions.add(session);
     }
-    _scheduleNotificationForSession(session);
     saveUserData();
   }
 
   void deleteSession(String id) {
     sessions.removeWhere((s) => s.id == id);
-    localNotificationsPlugin.cancel(id.hashCode);
     saveUserData();
-  }
-
-  Future<void> _scheduleNotificationForSession(StudySession session) async {
-    if (session.isCompleted) return;
-    
-    final dt = DateTime.fromMillisecondsSinceEpoch(session.scheduledDate);
-    if (dt.isBefore(DateTime.now())) return;
-
-    try {
-      await localNotificationsPlugin.schedule(
-        session.id.hashCode,
-        'UPCOMING SESSION: ${session.name}',
-        'Subject: ${session.subject} | Type: ${session.type}',
-        dt,
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'planner_alerts', 'Planner Alerts',
-            channelDescription: 'Notifications for upcoming study sessions',
-            importance: Importance.max, priority: Priority.high,
-          ),
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      );
-    } catch (e) {
-      debugPrint('Notification Scheduling Failed. Exact alarms may require native manifest configuration on Android 12+. Error: $e');
-    }
   }
 
   // --- Block CRUD (Days/Weeks) ---
@@ -647,7 +598,6 @@ class _DailyScheduleViewState extends State<DailyScheduleView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Top Level Day Actions
             Row(
               children: [
                 Expanded(
@@ -661,7 +611,6 @@ class _DailyScheduleViewState extends State<DailyScheduleView> {
             ),
             const SizedBox(height: 24),
             
-            // Day Stats Summary
             BrutalistBox(
               backgroundColor: BrutalistColors.brassAccent.withOpacity(0.1),
               child: Column(
@@ -677,7 +626,6 @@ class _DailyScheduleViewState extends State<DailyScheduleView> {
             ),
             const SizedBox(height: 24),
 
-            // Timeline of Sessions
             const Text('TIMELINE', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
             const Divider(),
             if (sessions.isEmpty)
@@ -765,7 +713,6 @@ class _WeeklyOverviewScreenState extends State<WeeklyOverviewScreen> {
   DateTime _referenceDate = DateTime.now();
 
   String get _weekKey {
-    // Basic ISO week calculation approximation
     int dayOfYear = int.parse(DateFormat('D').format(_referenceDate));
     int weekNum = ((dayOfYear - _referenceDate.weekday + 10) / 7).floor();
     return '${_referenceDate.year}-W$weekNum';
@@ -782,7 +729,6 @@ class _WeeklyOverviewScreenState extends State<WeeklyOverviewScreen> {
     final state = context.watch<PlannerState>();
     final weekPlan = state.getWeekPlan(_weekKey);
 
-    // Calculate start of week (Monday)
     DateTime startOfWeek = _referenceDate.subtract(Duration(days: _referenceDate.weekday - 1));
     DateTime endOfWeek = startOfWeek.add(const Duration(days: 6));
 
@@ -934,7 +880,6 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
             ),
             const SizedBox(height: 32),
             
-            // Goals Section
             const Text('OVERALL GOALS', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const Divider(),
             ...widget.block.goals.map((g) => CheckboxListTile(
@@ -961,7 +906,6 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
             ),
             const SizedBox(height: 48),
 
-            // Remarks Section
             const Text('PLAN REMARKS', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const Divider(),
             ...widget.block.remarks.map((r) => BrutalistBox(
@@ -1031,7 +975,7 @@ class _SessionConfigurationScreenState extends State<SessionConfigurationScreen>
       _selectedSubject = s.subject;
       _selectedType = s.type;
       _scheduledTime = DateTime.fromMillisecondsSinceEpoch(s.scheduledDate);
-      _goals = s.goals.map((g) => g.copyWith()).toList(); // Deep copy
+      _goals = s.goals.map((g) => g.copyWith()).toList(); 
       _remarks = List.from(s.remarks);
       _isCompleted = s.isCompleted;
       _actualSecs = s.actualDurationSecs;
@@ -1257,7 +1201,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
       ));
       _remarkCtrl.clear();
     });
-    // Silent save
     Provider.of<PlannerState>(context, listen: false).saveSession(widget.session);
   }
 
@@ -1265,7 +1208,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     _timer?.cancel();
     setState(() => _isRunning = false);
     
-    // Copy goals for temporary editing in dialog to avoid mutating if user cancels
     List<Goal> dialogGoals = widget.session.goals.map((g) => g.copyWith()).toList();
     final postRemarkCtrl = TextEditingController();
 
@@ -1298,13 +1240,12 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx), // Cancel close
+              onPressed: () => Navigator.pop(ctx), 
               child: const Text('RESUME SESSION', style: TextStyle(color: BrutalistColors.inkBlack, fontWeight: FontWeight.bold)),
             ),
             BrutalistButton(
               label: 'FINALIZE & SAVE',
               onPressed: () {
-                // Apply changes
                 widget.session.goals = dialogGoals;
                 widget.session.actualDurationSecs = _elapsedSeconds;
                 widget.session.isCompleted = true;
@@ -1320,8 +1261,8 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
                 }
 
                 Provider.of<PlannerState>(context, listen: false).saveSession(widget.session);
-                Navigator.pop(ctx); // Close dialog
-                Navigator.pop(context); // Close timer screen
+                Navigator.pop(ctx);
+                Navigator.pop(context);
               },
             )
           ],
@@ -1350,7 +1291,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
             Text('${widget.session.subject} | ${widget.session.type}', style: const TextStyle(fontSize: 16, color: BrutalistColors.neutralGray), textAlign: TextAlign.center),
             const SizedBox(height: 32),
             
-            // Timer Display
             Container(
               padding: const EdgeInsets.symmetric(vertical: 48),
               decoration: BoxDecoration(
@@ -1363,7 +1303,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
             ),
             const SizedBox(height: 32),
 
-            // Controls
             Row(
               children: [
                 Expanded(
@@ -1385,7 +1324,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
             ),
             const SizedBox(height: 32),
             
-            // Live Remarks Log
             const Text('LIVE REMARK LOG', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const Divider(),
             Expanded(
@@ -1401,7 +1339,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
               ),
             ),
             
-            // Input
             Row(
               children: [
                 Expanded(child: BrutalistTextField(controller: _remarkCtrl, labelText: 'INSERT LOG ENTRY')),
@@ -1511,7 +1448,7 @@ class PresetsManagementView extends StatelessWidget {
                     description: '',
                     subject: selectedSubject,
                     type: selectedType,
-                    goalTemplates: [], // Users can edit preset goals in a more advanced view if needed, keeping basic for MVP
+                    goalTemplates: [], 
                   ));
                   Navigator.pop(ctx);
                 }
@@ -1535,15 +1472,14 @@ class DataExportAnalyticsView extends StatefulWidget {
 }
 
 class _DataExportAnalyticsViewState extends State<DataExportAnalyticsView> {
-  String _exportTarget = 'GOALS'; // GOALS or REMARKS
+  String _exportTarget = 'GOALS'; 
   String _subjectFilter = 'ALL';
   String _typeFilter = 'ALL';
-  String _completionFilter = 'UNFINISHED'; // ALL, FINISHED, UNFINISHED
+  String _completionFilter = 'UNFINISHED'; 
 
   List<String> _generateExportData(PlannerState state) {
     List<String> lines = [];
     
-    // Sort sessions chronologically
     List<StudySession> sortedSessions = List.from(state.sessions);
     sortedSessions.sort((a, b) => a.scheduledDate.compareTo(b.scheduledDate));
 
@@ -1623,7 +1559,6 @@ class _DataExportAnalyticsViewState extends State<DataExportAnalyticsView> {
                         value: _completionFilter,
                         decoration: const InputDecoration(labelText: 'STATUS FILTER'),
                         items: const [DropdownMenuItem(value: 'ALL', child: Text('ALL')), DropdownMenuItem(value: 'FINISHED', child: Text('FINISHED')), DropdownMenuItem(value: 'UNFINISHED', child: Text('UNFINISHED'))],
-                        // Disable completion filter if targeting remarks
                         onChanged: _exportTarget == 'REMARKS' ? null : (v) => setState(() => _completionFilter = v!),
                       ),
                     ),
@@ -1694,7 +1629,6 @@ class UserProfileSettingsView extends StatelessWidget {
             ),
             const SizedBox(height: 32),
             
-            // Custom Subjects
             const Text('CUSTOM SUBJECT CATEGORIES', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const Divider(),
             Wrap(
@@ -1718,7 +1652,6 @@ class UserProfileSettingsView extends StatelessWidget {
             ),
             const SizedBox(height: 32),
 
-            // Custom Types
             const Text('CUSTOM SESSION TYPES', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const Divider(),
             Wrap(
@@ -1742,7 +1675,6 @@ class UserProfileSettingsView extends StatelessWidget {
             ),
             const SizedBox(height: 32),
 
-            // User Switcher
             const Text('OPERATOR PROFILES', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const Divider(),
             ...state.users.map((u) => ListTile(
